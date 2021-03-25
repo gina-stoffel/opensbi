@@ -19,6 +19,8 @@
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_timer.h>
 #include <sbi/sbi_trap.h>
+#include "enclave.h"
+#include "cpu.h"
 
 static void __noreturn sbi_trap_error(const char *msg, int rc,
 				      ulong mcause, ulong mtval, ulong mtval2,
@@ -91,6 +93,8 @@ int sbi_trap_redirect(struct sbi_trap_regs *regs,
 #endif
 	/* By default, we redirect to HS-mode */
 	bool next_virt = FALSE;
+
+	sbi_printf("Redirecting trap in opensbi sbi trap\n");
 
 	/* Sanity check on previous mode */
 	prev_mode = (regs->mstatus & MSTATUS_MPP) >> MSTATUS_MPP_SHIFT;
@@ -194,6 +198,27 @@ int sbi_trap_redirect(struct sbi_trap_regs *regs,
 	return 0;
 }
 
+/* take policy measurement */
+static void policy_measurement() {
+	int eid = cpu_get_enclave_id();
+
+	if (enclave_policies[eid].instr_count && enclave_policies[eid].cycle_count ) {
+		uint64_t measurement_1 = csr_read(minstret); // lets try to use this as a fix point
+		// uint64_t measurement_2 = csr_read(minstret);
+		uint64_t measurement_c = csr_read(mcycle);
+		// sbi_printf("Sanity check: are these two instruction counts close? %10lu and %10lu\n", measurement_1, measurement_2);
+		/* calculate total instructions and cycles run so far*/
+		enclave_policies[eid].instr_run_tot = enclave_policies[eid].instr_run_tot + (measurement_1 - enclave_policies[eid].instr_count);
+		enclave_policies[eid].cycles_run_tot = enclave_policies[eid].cycles_run_tot + (measurement_c - enclave_policies[eid].cycle_count);
+		sbi_printf("in trap: %10s %10lu, %10s %10lu\n", "instr_run_total:", enclave_policies[eid].instr_run_tot, "cycles_run_total:", enclave_policies[eid].cycles_run_tot);
+
+		/* update the current instruction/cycle count */
+		enclave_policies[eid].instr_count = measurement_1;
+		enclave_policies[eid].cycle_count = measurement_c;
+	}
+
+}
+
 /**
  * Handle trap/interrupt
  *
@@ -222,14 +247,24 @@ struct sbi_trap_regs *sbi_trap_handler(struct sbi_trap_regs *regs)
 		mtval2 = csr_read(CSR_MTVAL2);
 		mtinst = csr_read(CSR_MTINST);
 	}
+	
+	//if(enclave_is_running == 1) { // just put one to be sure (dkn what uninitalized value is)
+		/* collect all arriving traps */
+		// sbi_printf("%-20s %20x %-20s %20lu %-20s %20lu \n", "Trap cause:", mcause, "Trap info:", mtval, "Trap instr:", mtinst);
+		
+		// policy_measurement();
+	//}
 
+	/* checks for most significant bit set (asynchronous traps) */
 	if (mcause & (1UL << (__riscv_xlen - 1))) {
 		mcause &= ~(1UL << (__riscv_xlen - 1));
 		switch (mcause) {
 		case IRQ_M_TIMER:
+			//sbi_printf("In OPENSBI SBI trap handler, timer\n");
 			sbi_timer_process();
 			break;
 		case IRQ_M_SOFT:
+			sbi_printf("In OPENSBI SBI trap handler, soft\n");
 			sbi_ipi_process();
 			break;
 		default:
@@ -239,6 +274,7 @@ struct sbi_trap_regs *sbi_trap_handler(struct sbi_trap_regs *regs)
 		return regs;
 	}
 
+	/* in this case we have a synchronous trap */
 	switch (mcause) {
 	case CAUSE_ILLEGAL_INSTRUCTION:
 		rc  = sbi_illegal_insn_handler(mtval, regs);
@@ -253,12 +289,24 @@ struct sbi_trap_regs *sbi_trap_handler(struct sbi_trap_regs *regs)
 		msg = "misaligned store handler failed";
 		break;
 	case CAUSE_SUPERVISOR_ECALL:
+		//sbi_printf("In OPENSBI SBI trap handler, SUPERVISOR ECALL\n");
 	case CAUSE_MACHINE_ECALL:
+		//sbi_printf("In OPENSBI SBI trap handler, MACHINE ECALL\n");
+
+		if(enclave_is_running) {
+			policy_measurement();
+		}
+
 		rc  = sbi_ecall_handler(regs);
 		msg = "ecall handler failed";
 		break;
 	default:
+		if(enclave_is_running) {
+			policy_measurement();
+		}
+
 		/* If the trap came from S or U mode, redirect it there */
+		sbi_printf("In OPENSBI SBI trap handler, redirecting trap\n");
 		trap.epc = regs->mepc;
 		trap.cause = mcause;
 		trap.tval = mtval;

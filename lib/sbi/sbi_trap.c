@@ -248,6 +248,9 @@ struct sbi_trap_regs *sbi_trap_handler(struct sbi_trap_regs *regs)
 		mtinst = csr_read(CSR_MTINST);
 	}
 	
+	if(enclave_is_running) {
+		policy_measurement();
+	}
 	//if(enclave_is_running == 1) { // just put one to be sure (dkn what uninitalized value is)
 		/* collect all arriving traps */
 		// sbi_printf("%-20s %20x %-20s %20lu %-20s %20lu \n", "Trap cause:", mcause, "Trap info:", mtval, "Trap instr:", mtinst);
@@ -293,9 +296,6 @@ struct sbi_trap_regs *sbi_trap_handler(struct sbi_trap_regs *regs)
 	case CAUSE_MACHINE_ECALL:
 		//sbi_printf("In OPENSBI SBI trap handler, MACHINE ECALL\n");
 
-		if(enclave_is_running) {
-			policy_measurement();
-		}
 
 		rc  = sbi_ecall_handler(regs);
 		msg = "ecall handler failed";

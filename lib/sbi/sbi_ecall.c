@@ -103,6 +103,12 @@ int sbi_ecall_handler(struct sbi_trap_regs *regs)
 	unsigned long out_val = 0;
 	bool is_0_1_spec = 0;
 
+	if (func_id == 2001) {
+		// in this case we call to create an enclave
+		// lets log this
+		sbi_printf("[opensbi]The following arguments are passed on to create enclave: %lu\n", regs->a0);
+	}
+
 	//sbi_printf("In opensbi SBI ecall handler\n"); Too many calls -> find where this go, follow the stack
 
 	ext = sbi_ecall_find_extension(extension_id);
@@ -110,7 +116,7 @@ int sbi_ecall_handler(struct sbi_trap_regs *regs)
 		ret = ext->handle(extension_id, func_id,
 				  regs, &out_val, &trap);
 		if (enclave_is_running) {
-			// sbi_printf("%-20s %-20s %20lu %-20s %20lu %-20s %20lu\n", "Ecall handler:", "func id:", func_id, "extension id:", extension_id, "ecall pc:", regs->mepc);
+			//sbi_printf("%-20s %-20s %20lu %-20s %20lu %-20s %20lu\n", "Ecall handler:", "func id:", func_id, "extension id:", extension_id, "ecall pc:", regs->mepc);
 		}
 		if (extension_id >= SBI_EXT_0_1_SET_TIMER &&
 		    extension_id <= SBI_EXT_0_1_SHUTDOWN)

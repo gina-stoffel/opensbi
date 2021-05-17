@@ -43,7 +43,7 @@
 
 /* clang-format on */
 
-#ifndef __ASSEMBLY__
+#ifndef __ASSEMBLER__
 
 #include <sbi/sbi_types.h>
 
@@ -71,7 +71,7 @@ struct sbi_scratch {
 	unsigned long tmp0;
 	/** Options for OpenSBI library */
 	unsigned long options;
-} __packed;
+};
 
 /** Possible options for OpenSBI library */
 enum sbi_scratch_options {

@@ -9,6 +9,7 @@
 
 #include <sbi/riscv_asm.h>
 #include <sbi/riscv_encoding.h>
+#include <sbi/riscv_elf.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_trap.h>
@@ -57,39 +58,91 @@ _start:
 	bne	a0, a6, _wait_relocate_copy_done
 _try_lottery:
 	/* Jump to relocation wait loop if we don't get relocation lottery */
-	la	a6, _relocate_lottery
+	lla	a6, _relocate_lottery
 	li	a7, 1
 	amoadd.w a6, a7, (a6)
 	bnez	a6, _wait_relocate_copy_done
 
 	/* Save load address */
-	la	t0, _load_start
-	la	t1, _start
+	lla	t0, _load_start
+	lla	t1, _start
 	REG_S	t1, 0(t0)
 
+#ifdef FW_PIC
+	/* relocate the global table content */
+	lla	t0, _link_start
+	REG_L	t0, 0(t0)
+	/* t1 shall has the address of _start */
+	sub	t2, t1, t0
+	lla	t3, _runtime_offset
+	REG_S	t2, (t3)
+	lla	t0, __rel_dyn_start
+	lla	t1, __rel_dyn_end
+	beq	t0, t1, _relocate_done
+	j	5f
+2:
+	REG_L	t5, -(REGBYTES*2)(t0)	/* t5 <-- relocation info:type */
+	li	t3, R_RISCV_RELATIVE	/* reloc type R_RISCV_RELATIVE */
+	bne	t5, t3, 3f
+	REG_L	t3, -(REGBYTES*3)(t0)
+	REG_L	t5, -(REGBYTES)(t0)	/* t5 <-- addend */
+	add	t5, t5, t2
+	add	t3, t3, t2
+	REG_S	t5, 0(t3)		/* store runtime address to the GOT entry */
+	j	5f
+
+3:
+	lla	t4, __dyn_sym_start
+
+4:
+	REG_L	t5, -(REGBYTES*2)(t0)	/* t5 <-- relocation info:type */
+	srli	t6, t5, SYM_INDEX	/* t6 <--- sym table index */
+	andi	t5, t5, 0xFF		/* t5 <--- relocation type */
+	li	t3, RELOC_TYPE
+	bne	t5, t3, 5f
+
+	/* address R_RISCV_64 or R_RISCV_32 cases*/
+	REG_L	t3, -(REGBYTES*3)(t0)
+	li	t5, SYM_SIZE
+	mul	t6, t6, t5
+	add	s5, t4, t6
+	REG_L	t6, -(REGBYTES)(t0)	/* t0 <-- addend */
+	REG_L	t5, REGBYTES(s5)
+	add	t5, t5, t6
+	add	t5, t5, t2		/* t5 <-- location to fix up in RAM */
+	add	t3, t3, t2		/* t3 <-- location to fix up in RAM */
+	REG_S	t5, 0(t3)		/* store runtime address to the variable */
+
+5:
+	addi	t0, t0, (REGBYTES*3)
+	ble	t0, t1, 2b
+	j	_relocate_done
+_wait_relocate_copy_done:
+	j	_wait_for_boot_hart
+#else
 	/* Relocate if load address != link address */
 _relocate:
-	la	t0, _link_start
+	lla	t0, _link_start
 	REG_L	t0, 0(t0)
-	la	t1, _link_end
+	lla	t1, _link_end
 	REG_L	t1, 0(t1)
-	la	t2, _load_start
+	lla	t2, _load_start
 	REG_L	t2, 0(t2)
 	sub	t3, t1, t0
 	add	t3, t3, t2
 	beq	t0, t2, _relocate_done
-	la	t4, _relocate_done
+	lla	t4, _relocate_done
 	sub	t4, t4, t2
 	add	t4, t4, t0
 	blt	t2, t0, _relocate_copy_to_upper
 _relocate_copy_to_lower:
 	ble	t1, t2, _relocate_copy_to_lower_loop
-	la	t3, _relocate_lottery
+	lla	t3, _relocate_lottery
 	BRANGE	t2, t1, t3, _start_hang
-	la	t3, _boot_status
+	lla	t3, _boot_status
 	BRANGE	t2, t1, t3, _start_hang
-	la	t3, _relocate
-	la	t5, _relocate_done
+	lla	t3, _relocate
+	lla	t5, _relocate_done
 	BRANGE	t2, t1, t3, _start_hang
 	BRANGE	t2, t1, t5, _start_hang
 	BRANGE  t3, t5, t2, _start_hang
@@ -102,12 +155,12 @@ _relocate_copy_to_lower_loop:
 	jr	t4
 _relocate_copy_to_upper:
 	ble	t3, t0, _relocate_copy_to_upper_loop
-	la	t2, _relocate_lottery
+	lla	t2, _relocate_lottery
 	BRANGE	t0, t3, t2, _start_hang
-	la	t2, _boot_status
+	lla	t2, _boot_status
 	BRANGE	t0, t3, t2, _start_hang
-	la	t2, _relocate
-	la	t5, _relocate_done
+	lla	t2, _relocate
+	lla	t5, _relocate_done
 	BRANGE	t0, t3, t2, _start_hang
 	BRANGE	t0, t3, t5, _start_hang
 	BRANGE	t2, t5, t0, _start_hang
@@ -119,12 +172,12 @@ _relocate_copy_to_upper_loop:
 	blt	t0, t1, _relocate_copy_to_upper_loop
 	jr	t4
 _wait_relocate_copy_done:
-	la	t0, _start
-	la	t1, _link_start
+	lla	t0, _start
+	lla	t1, _link_start
 	REG_L	t1, 0(t1)
 	beq	t0, t1, _wait_for_boot_hart
-	la	t2, _boot_status
-	la	t3, _wait_for_boot_hart
+	lla	t2, _boot_status
+	lla	t3, _wait_for_boot_hart
 	sub	t3, t3, t0
 	add	t3, t3, t1
 1:
@@ -137,19 +190,22 @@ _wait_relocate_copy_done:
 	nop
 	bgt     t4, t5, 1b
 	jr	t3
+#endif
 _relocate_done:
 
 	/*
 	 * Mark relocate copy done
 	 * Use _boot_status copy relative to the load address
 	 */
-	la	t0, _boot_status
-	la	t1, _link_start
+	lla	t0, _boot_status
+#ifndef FW_PIC
+	lla	t1, _link_start
 	REG_L	t1, 0(t1)
-	la	t2, _load_start
+	lla	t2, _load_start
 	REG_L	t2, 0(t2)
 	sub	t0, t0, t1
 	add	t0, t0, t2
+#endif
 	li	t1, BOOT_STATUS_RELOCATE_DONE
 	REG_S	t1, 0(t0)
 	fence	rw, rw
@@ -161,19 +217,19 @@ _relocate_done:
 	call	_reset_regs
 
 	/* Zero-out BSS */
-	la	s4, _bss_start
-	la	s5, _bss_end
+	lla	s4, _bss_start
+	lla	s5, _bss_end
 _bss_zero:
 	REG_S	zero, (s4)
 	add	s4, s4, __SIZEOF_POINTER__
 	blt	s4, s5, _bss_zero
 
 	/* Setup temporary trap handler */
-	la	s4, _start_hang
+	lla	s4, _start_hang
 	csrw	CSR_MTVEC, s4
 
 	/* Setup temporary stack */
-	la	s4, _fw_end
+	lla	s4, _fw_end
 	li	s5, (SBI_SCRATCH_SIZE * 2)
 	add	sp, s4, s5
 
@@ -184,7 +240,7 @@ _bss_zero:
 
 #ifdef FW_FDT_PATH
 	/* Override previous arg1 */
-	la	a1, fw_fdt_bin
+	lla	a1, fw_fdt_bin
 #endif
 
 	/*
@@ -202,7 +258,7 @@ _bss_zero:
 	 * s7 -> HART Count
 	 * s8 -> HART Stack Size
 	 */
-	la	a4, platform
+	lla	a4, platform
 #if __riscv_xlen == 64
 	lwu	s7, SBI_PLATFORM_HART_COUNT_OFFSET(a4)
 	lwu	s8, SBI_PLATFORM_HART_STACK_SIZE_OFFSET(a4)
@@ -212,7 +268,7 @@ _bss_zero:
 #endif
 
 	/* Setup scratch space for all the HARTs*/
-	la	tp, _fw_end
+	lla	tp, _fw_end
 	mul	a5, s7, s8
 	add	tp, tp, a5
 	/* Keep a copy of tp */
@@ -230,8 +286,8 @@ _scratch_init:
 
 	/* Initialize scratch space */
 	/* Store fw_start and fw_size in scratch space */
-	la	a4, _fw_start
-	la	a5, _fw_end
+	lla	a4, _fw_start
+	lla	a5, _fw_end
 	mul	t0, s7, s8
 	add	a5, a5, t0
 	sub	a5, a5, a4
@@ -253,16 +309,16 @@ _scratch_init:
 	REG_S	a0, SBI_SCRATCH_NEXT_MODE_OFFSET(tp)
 	MOV_3R	a0, s0, a1, s1, a2, s2
 	/* Store warm_boot address in scratch space */
-	la	a4, _start_warm
+	lla	a4, _start_warm
 	REG_S	a4, SBI_SCRATCH_WARMBOOT_ADDR_OFFSET(tp)
 	/* Store platform address in scratch space */
-	la	a4, platform
+	lla	a4, platform
 	REG_S	a4, SBI_SCRATCH_PLATFORM_ADDR_OFFSET(tp)
 	/* Store hartid-to-scratch function address in scratch space */
-	la	a4, _hartid_to_scratch
+	lla	a4, _hartid_to_scratch
 	REG_S	a4, SBI_SCRATCH_HARTID_TO_SCRATCH_OFFSET(tp)
 	/* Store trap-exit function address in scratch space */
-	la	a4, _trap_exit
+	lla	a4, _trap_exit
 	REG_S	a4, SBI_SCRATCH_TRAP_EXIT_OFFSET(tp)
 	/* Clear tmp0 in scratch space */
 	REG_S	zero, SBI_SCRATCH_TMP0_OFFSET(tp)
@@ -343,7 +399,7 @@ _fdt_reloc_done:
 
 	/* mark boot hart done */
 	li	t0, BOOT_STATUS_BOOT_HART_DONE
-	la	t1, _boot_status
+	lla	t1, _boot_status
 	REG_S	t0, 0(t1)
 	fence	rw, rw
 	j	_start_warm
@@ -351,7 +407,7 @@ _fdt_reloc_done:
 	/* waiting for boot hart to be done (_boot_status == 2) */
 _wait_for_boot_hart:
 	li	t0, BOOT_STATUS_BOOT_HART_DONE
-	la	t1, _boot_status
+	lla	t1, _boot_status
 	REG_L	t1, 0(t1)
 	/* Reduce the bus traffic so that boot hart may proceed faster */
 	nop
@@ -369,7 +425,7 @@ _start_warm:
 	csrw	CSR_MIP, zero
 
 	/* Find HART count and HART stack size */
-	la	a4, platform
+	lla	a4, platform
 #if __riscv_xlen == 64
 	lwu	s7, SBI_PLATFORM_HART_COUNT_OFFSET(a4)
 	lwu	s8, SBI_PLATFORM_HART_STACK_SIZE_OFFSET(a4)
@@ -400,7 +456,7 @@ _start_warm:
 3:	bge	s6, s7, _start_hang
 
 	/* Find the scratch space based on HART index */
-	la	tp, _fw_end
+	lla	tp, _fw_end
 	mul	a5, s7, s8
 	add	tp, tp, a5
 	mul	a5, s8, s6
@@ -415,13 +471,13 @@ _start_warm:
 	add	sp, tp, zero
 
 	/* Setup trap handler */
-	la	a4, _trap_handler
+	lla	a4, _trap_handler
 #if __riscv_xlen == 32
 	csrr	a5, CSR_MISA
 	srli	a5, a5, ('H' - 'A')
 	andi	a5, a5, 0x1
 	beq	a5, zero, _skip_trap_handler_rv32_hyp
-	la	a4, _trap_handler_rv32_hyp
+	lla	a4, _trap_handler_rv32_hyp
 _skip_trap_handler_rv32_hyp:
 #endif
 	csrw	CSR_MTVEC, a4
@@ -432,7 +488,7 @@ _skip_trap_handler_rv32_hyp:
 	srli	a5, a5, ('H' - 'A')
 	andi	a5, a5, 0x1
 	beq	a5, zero, _skip_trap_exit_rv32_hyp
-	la	a4, _trap_exit_rv32_hyp
+	lla	a4, _trap_exit_rv32_hyp
 	csrr	a5, CSR_MSCRATCH
 	REG_S	a4, SBI_SCRATCH_TRAP_EXIT_OFFSET(a5)
 _skip_trap_exit_rv32_hyp:
@@ -446,6 +502,10 @@ _skip_trap_exit_rv32_hyp:
 	j	_start_hang
 
 	.align 3
+#ifdef FW_PIC
+_runtime_offset:
+	RISCV_PTR	0
+#endif
 _relocate_lottery:
 	RISCV_PTR	0
 _boot_status:
@@ -453,7 +513,7 @@ _boot_status:
 _load_start:
 	RISCV_PTR	_fw_start
 _link_start:
-	RISCV_PTR	_fw_start
+	RISCV_PTR	FW_TEXT_START
 _link_end:
 	RISCV_PTR	_fw_reloc_end
 
@@ -468,7 +528,7 @@ _hartid_to_scratch:
 	 * t1 -> HART Stack End
 	 * t2 -> Temporary
 	 */
-	la	t2, platform
+	lla	t2, platform
 #if __riscv_xlen == 64
 	lwu	t0, SBI_PLATFORM_HART_STACK_SIZE_OFFSET(t2)
 	lwu	t2, SBI_PLATFORM_HART_COUNT_OFFSET(t2)
@@ -478,7 +538,7 @@ _hartid_to_scratch:
 #endif
 	sub	t2, t2, a1
 	mul	t2, t2, t0
-	la	t1, _fw_end
+	lla	t1, _fw_end
 	add	t1, t1, t2
 	li	t2, SBI_SCRATCH_SIZE
 	sub	a0, t1, t2
@@ -651,6 +711,7 @@ fw_platform_init:
 	.section .entry, "ax", %progbits
 	.align 3
 	.globl _trap_handler
+	.globl _trap_exit
 _trap_handler:
 	TRAP_SAVE_AND_SETUP_SP_T0
 
@@ -660,17 +721,6 @@ _trap_handler:
 
 	TRAP_CALL_C_ROUTINE
 
-	TRAP_RESTORE_GENERAL_REGS_EXCEPT_SP_T0
-
-	TRAP_RESTORE_MEPC_MSTATUS 0
-
-	TRAP_RESTORE_SP_T0
-
-	mret
-
-	.section .entry, "ax", %progbits
-	.align 3
-	.globl _trap_exit
 _trap_exit:
 	add	sp, a0, zero
 
@@ -686,6 +736,7 @@ _trap_exit:
 	.section .entry, "ax", %progbits
 	.align 3
 	.globl _trap_handler_rv32_hyp
+	.globl _trap_exit_rv32_hyp
 _trap_handler_rv32_hyp:
 	TRAP_SAVE_AND_SETUP_SP_T0
 
@@ -695,17 +746,6 @@ _trap_handler_rv32_hyp:
 
 	TRAP_CALL_C_ROUTINE
 
-	TRAP_RESTORE_GENERAL_REGS_EXCEPT_SP_T0
-
-	TRAP_RESTORE_MEPC_MSTATUS 1
-
-	TRAP_RESTORE_SP_T0
-
-	mret
-
-	.section .entry, "ax", %progbits
-	.align 3
-	.globl _trap_exit_rv32_hyp
 _trap_exit_rv32_hyp:
 	add	sp, a0, zero
 

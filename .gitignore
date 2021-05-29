@@ -6,6 +6,7 @@
 #Build & install directories
 build/
 install/
+firmware/
 
 # Development friendly files
 tags

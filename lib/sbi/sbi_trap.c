@@ -19,6 +19,7 @@
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_timer.h>
 #include <sbi/sbi_trap.h>
+#include "../../src/enclave.h"
 
 static void __noreturn sbi_trap_error(const char *msg, int rc,
 				      ulong mcause, ulong mtval, ulong mtval2,
@@ -212,6 +213,12 @@ int sbi_trap_redirect(struct sbi_trap_regs *regs,
  */
 void sbi_trap_handler(struct sbi_trap_regs *regs)
 {
+	if (detect_policy_violation()) {
+		/* choose sanction */
+		/* report detected policy violation to user */
+		print_policy_warning();
+	}
+
 	int rc = SBI_ENOTSUPP;
 	const char *msg = "trap handler failed";
 	ulong mcause = csr_read(CSR_MCAUSE);
